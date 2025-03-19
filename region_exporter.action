@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- put this in an actions folder. If the plugin goes in /pykrita/region_exporter.desktop, this goes in /actions/region_exporter.action. Create the 'actions' folder if needed. -->
+<ActionCollection version="2" name="Scripts">
+    <Actions category="Scripts">
+        <text>My Scripts</text>
+        <Action name="export_rectangle">
+            <icon></icon>
+            <text>Export Rectangle</text>
+            <whatsThis>Export the active document cropped to a specified rectangle.</whatsThis>
+            <toolTip>Export Rectangle</toolTip>
+            <iconText>Export Rect</iconText>
+            <activationFlags>1</activationFlags>
+            <activationConditions>0</activationConditions>
+            <shortcut>Ctrl+Shift+E</shortcut>
+            <isCheckable>false</isCheckable>
+            <statusTip>Export the active document with a custom rectangular crop</statusTip>
+        </Action>
+    </Actions>
+</ActionCollection>
