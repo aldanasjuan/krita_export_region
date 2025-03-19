@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=Krita/PythonPlugin
+X-KDE-Library=region_exporter
+X-Python-2-Compatible=false
+Name=Region Exporter
+Comment=Exports a region from the canvas.
