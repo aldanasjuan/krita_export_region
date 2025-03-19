@@ -1,8 +1,8 @@
 import os
 from krita import Extension, Krita
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QComboBox
 from PyQt5.QtCore import QRect, QSettings, Qt
-from PyQt5.QtGui import QImage
+from PyQt5.QtGui import QImage, QTransform
 
 class ExportRectangleDialog(QDialog):
     def __init__(self, parent=None):
@@ -37,8 +37,7 @@ class ExportRectangleDialog(QDialog):
         regionLayout.addWidget(self.heightEdit)
         layout.addLayout(regionLayout)
 
-        # --- New Code: Resize Inputs with Persistence ---
-        # Retrieve persisted new width/height values, defaulting to region values.
+        # --- Resize Inputs with Persistence ---
         newWidth_default = self.settings.value("newWidth", width_default)
         newHeight_default = self.settings.value("newHeight", height_default)
         self.newWidthEdit = QLineEdit(newWidth_default)
@@ -49,7 +48,23 @@ class ExportRectangleDialog(QDialog):
         resizeLayout.addWidget(QLabel("New Height:"))
         resizeLayout.addWidget(self.newHeightEdit)
         layout.addLayout(resizeLayout)
-        # --- End New Code ---
+        # --- End Resize Inputs ---
+
+        # --- Rotation Option ---
+        rotation_default = self.settings.value("rotation", "None")
+        self.rotationCombo = QComboBox()
+        self.rotationCombo.addItems(["None", "Rotate Clockwise", "Rotate Counterclockwise"])
+        # Set the default selection (if the stored value is one of the items)
+        index = self.rotationCombo.findText(rotation_default)
+        if index != -1:
+            self.rotationCombo.setCurrentIndex(index)
+        else:
+            self.rotationCombo.setCurrentIndex(0)
+        rotateLayout = QHBoxLayout()
+        rotateLayout.addWidget(QLabel("Rotation:"))
+        rotateLayout.addWidget(self.rotationCombo)
+        layout.addLayout(rotateLayout)
+        # --- End Rotation Option ---
 
         # Create file output selector.
         last_output_dir = self.settings.value("lastOutputDir", "")
@@ -114,13 +129,21 @@ class ExportRectangleDialog(QDialog):
         # Use the projection method to get the cropped image.
         cropped = doc.projection(x, y, w, h)
 
-        # --- New Code: Resize if necessary ---
-        # If the new dimensions differ from the region's, scale the cropped image.
+        # Resize if necessary.
         if newW != w or newH != h:
             cropped = cropped.scaled(newW, newH, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-        # --- End New Code ---
 
-        # Save the cropped (and possibly resized) image.
+        # --- Rotation Logic ---
+        rotation = self.rotationCombo.currentText()
+        if rotation == "Rotate Clockwise":
+            transform = QTransform().rotate(90)
+            cropped = cropped.transformed(transform, Qt.SmoothTransformation)
+        elif rotation == "Rotate Counterclockwise":
+            transform = QTransform().rotate(-90)
+            cropped = cropped.transformed(transform, Qt.SmoothTransformation)
+        # --- End Rotation Logic ---
+
+        # Save the cropped (and possibly resized/rotated) image.
         if cropped.save(outputFile):
             # Persist current region values.
             self.settings.setValue("x", self.xEdit.text())
@@ -130,6 +153,8 @@ class ExportRectangleDialog(QDialog):
             # Persist new resize values.
             self.settings.setValue("newWidth", self.newWidthEdit.text())
             self.settings.setValue("newHeight", self.newHeightEdit.text())
+            # Persist rotation option.
+            self.settings.setValue("rotation", self.rotationCombo.currentText())
             # Persist the output directory.
             self.settings.setValue("lastOutputDir", os.path.dirname(outputFile))
             QMessageBox.information(self, "Success", "Export successful!")
