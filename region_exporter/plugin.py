@@ -1,8 +1,22 @@
 import os
 from krita import Extension, Krita
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QComboBox
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+                             QPushButton, QFileDialog, QMessageBox, QComboBox, QCheckBox)
 from PyQt5.QtCore import QRect, QSettings, Qt
 from PyQt5.QtGui import QImage, QTransform
+
+def set_node_and_parents_visible(node, visible):
+    """
+    Sets the visibility of the given node and all of its parent nodes.
+    
+    Parameters:
+        node: The Krita node (layer or group) to update.
+        visible: A boolean value indicating whether the node and its parents should be visible.
+    """
+    current_node = node
+    while current_node is not None:
+        current_node.setVisible(visible)
+        current_node = current_node.parentNode()
 
 class ExportRectangleDialog(QDialog):
     def __init__(self, parent=None):
@@ -54,7 +68,6 @@ class ExportRectangleDialog(QDialog):
         rotation_default = self.settings.value("rotation", "None")
         self.rotationCombo = QComboBox()
         self.rotationCombo.addItems(["None", "Rotate Clockwise", "Rotate Counterclockwise"])
-        # Set the default selection (if the stored value is one of the items)
         index = self.rotationCombo.findText(rotation_default)
         if index != -1:
             self.rotationCombo.setCurrentIndex(index)
@@ -65,6 +78,14 @@ class ExportRectangleDialog(QDialog):
         rotateLayout.addWidget(self.rotationCombo)
         layout.addLayout(rotateLayout)
         # --- End Rotation Option ---
+
+        # --- Checkbox for Export Option ---
+        self.exportSelectedCheckbox = QCheckBox("Export Selected Layers Only")
+        # Retrieve the last state; default is unchecked.
+        export_selected_default = self.settings.value("exportSelected", "false")
+        self.exportSelectedCheckbox.setChecked(export_selected_default == "true")
+        layout.addWidget(self.exportSelectedCheckbox)
+        # --- End Checkbox Option ---
 
         # Create file output selector.
         last_output_dir = self.settings.value("lastOutputDir", "")
@@ -95,6 +116,18 @@ class ExportRectangleDialog(QDialog):
         if fileName:
             self.outputPathEdit.setText(fileName)
 
+    def get_all_nodes(self, doc):
+        """Recursively get all nodes from the document."""
+        nodes = []
+        def traverse(node):
+            nodes.append(node)
+            for child in node.childNodes():
+                traverse(child)
+        for node in doc.topLevelNodes():
+            traverse(node)
+        return nodes
+    
+
     def export(self):
         # Get integer values from region inputs.
         try:
@@ -115,19 +148,46 @@ class ExportRectangleDialog(QDialog):
             return
 
         outputFile = self.outputPathEdit.text().strip()
-        if not outputFile:
-            QMessageBox.warning(self, "Error", "Please select an output file.")
+        if not outputFile or os.path.isdir(outputFile):
+            QMessageBox.warning(self, "Error", "Please select a valid output file (not a directory).")
             return
 
-        # Get the active document from Krita.
         app = Krita.instance()
         doc = app.activeDocument()
+        view = app.activeWindow().activeView()
         if doc is None:
             QMessageBox.warning(self, "Error", "No active document found.")
             return
 
-        # Use the projection method to get the cropped image.
-        cropped = doc.projection(x, y, w, h)
+        
+        layers = 0
+        # If exporting selected layers only, hide all other layers temporarily.
+        if self.exportSelectedCheckbox.isChecked():
+            selected_nodes = view.selectedNodes()
+            if not selected_nodes:
+                QMessageBox.warning(self, "Error", "No layers selected.")
+                return
+            # Get all nodes to adjust their visibility.
+            all_nodes = self.get_all_nodes(doc)
+            old_visibility = {}
+            for node in all_nodes:
+                id = node.uniqueId().toString()
+                old_visibility[id] = node.visible()
+                node.setVisible(False)
+            for node in selected_nodes:
+                set_node_and_parents_visible(node, True)
+                layers = layers + 1
+            doc.refreshProjection()
+            # Perform the projection on the selected layers.
+            cropped = doc.projection(x, y, w, h)
+            # Restore original visibility.
+            for node in all_nodes:
+                id = node.uniqueId().toString()
+                node.setVisible(old_visibility[id])
+            doc.refreshProjection()
+        else:
+            # Use the projection method on the whole document.
+            cropped = doc.projection(x, y, w, h)
 
         # Resize if necessary.
         if newW != w or newH != h:
@@ -143,8 +203,10 @@ class ExportRectangleDialog(QDialog):
             cropped = cropped.transformed(transform, Qt.SmoothTransformation)
         # --- End Rotation Logic ---
 
-        # Save the cropped (and possibly resized/rotated) image.
+        # Save the cropped image.
         if cropped.save(outputFile):
+            # Save the exportSelected choice.
+            self.settings.setValue("exportSelected", "true" if self.exportSelectedCheckbox.isChecked() else "false")
             # Persist current region values.
             self.settings.setValue("x", self.xEdit.text())
             self.settings.setValue("y", self.yEdit.text())
@@ -157,7 +219,7 @@ class ExportRectangleDialog(QDialog):
             self.settings.setValue("rotation", self.rotationCombo.currentText())
             # Persist the output directory.
             self.settings.setValue("lastOutputDir", os.path.dirname(outputFile))
-            QMessageBox.information(self, "Success", "Export successful!")
+            QMessageBox.information(self, "Success", "Export successful!{0}".format(" Layers exported: {0}".format(layers) if self.exportSelectedCheckbox.isChecked() else ""))
             self.accept()
         else:
             QMessageBox.warning(self, "Error", "Failed to save the cropped image.")
