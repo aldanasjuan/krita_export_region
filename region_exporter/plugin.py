@@ -94,16 +94,27 @@ class ExportRectangleDialog(QDialog):
         layout.addWidget(self.exportSelectedCheckbox)
         # --- End Checkbox Option ---
 
-        # Create file output selector.
+        # --- Modified Code: Prefill Output File with Layer Name ---
         last_output_dir = self.settings.value("lastOutputDir", "")
+        default_output = last_output_dir
+        if last_output_dir:
+            app = Krita.instance()
+            doc = app.activeDocument()
+            if doc:
+                active_node = doc.activeNode()
+                layer_name = active_node.name() if active_node else "export"
+            else:
+                layer_name = "export"
+            default_output = os.path.join(last_output_dir, f"{layer_name}.png")
         fileLayout = QHBoxLayout()
-        self.outputPathEdit = QLineEdit(last_output_dir)
+        self.outputPathEdit = QLineEdit(default_output)
         btnBrowse = QPushButton("Browse")
         btnBrowse.clicked.connect(self.browseFile)
         fileLayout.addWidget(QLabel("Output File:"))
         fileLayout.addWidget(self.outputPathEdit)
         fileLayout.addWidget(btnBrowse)
         layout.addLayout(fileLayout)
+        # --- End Modified Code ---
 
         # Export button.
         btnExport = QPushButton("Export")
@@ -114,14 +125,13 @@ class ExportRectangleDialog(QDialog):
 
     def fillCanvasSize(self):
         """
-        Sets the region width and height (and resets X and Y) to the current canvas size.
+        Sets the region fields to the current canvas size (X=0, Y=0, Width/Height from document).
         """
         app = Krita.instance()
         doc = app.activeDocument()
         if doc is None:
             QMessageBox.warning(self, "Error", "No active document found.")
             return
-        # Set origin to (0, 0) and width/height to the document's size.
         self.xEdit.setText("0")
         self.yEdit.setText("0")
         self.widthEdit.setText(str(doc.width()))
@@ -149,7 +159,6 @@ class ExportRectangleDialog(QDialog):
             traverse(node)
         return nodes
     
-
     def export(self):
         # Get integer values from region inputs.
         try:
