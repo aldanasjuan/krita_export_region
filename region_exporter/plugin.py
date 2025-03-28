@@ -51,6 +51,14 @@ class ExportRectangleDialog(QDialog):
         regionLayout.addWidget(self.heightEdit)
         layout.addLayout(regionLayout)
 
+        # --- New Button: Fill with Canvas Size ---
+        fillLayout = QHBoxLayout()
+        btnFillCanvas = QPushButton("Fill with Canvas Size")
+        btnFillCanvas.clicked.connect(self.fillCanvasSize)
+        fillLayout.addWidget(btnFillCanvas)
+        layout.addLayout(fillLayout)
+        # --- End New Button ---
+
         # --- Resize Inputs with Persistence ---
         newWidth_default = self.settings.value("newWidth", width_default)
         newHeight_default = self.settings.value("newHeight", height_default)
@@ -81,7 +89,6 @@ class ExportRectangleDialog(QDialog):
 
         # --- Checkbox for Export Option ---
         self.exportSelectedCheckbox = QCheckBox("Export Selected Layers Only")
-        # Retrieve the last state; default is unchecked.
         export_selected_default = self.settings.value("exportSelected", "false")
         self.exportSelectedCheckbox.setChecked(export_selected_default == "true")
         layout.addWidget(self.exportSelectedCheckbox)
@@ -104,6 +111,21 @@ class ExportRectangleDialog(QDialog):
         layout.addWidget(btnExport)
 
         self.setLayout(layout)
+
+    def fillCanvasSize(self):
+        """
+        Sets the region width and height (and resets X and Y) to the current canvas size.
+        """
+        app = Krita.instance()
+        doc = app.activeDocument()
+        if doc is None:
+            QMessageBox.warning(self, "Error", "No active document found.")
+            return
+        # Set origin to (0, 0) and width/height to the document's size.
+        self.xEdit.setText("0")
+        self.yEdit.setText("0")
+        self.widthEdit.setText(str(doc.width()))
+        self.heightEdit.setText(str(doc.height()))
 
     def browseFile(self):
         default_dir = self.settings.value("lastOutputDir", "")
@@ -159,7 +181,6 @@ class ExportRectangleDialog(QDialog):
             QMessageBox.warning(self, "Error", "No active document found.")
             return
 
-        
         layers = 0
         # If exporting selected layers only, hide all other layers temporarily.
         if self.exportSelectedCheckbox.isChecked():
