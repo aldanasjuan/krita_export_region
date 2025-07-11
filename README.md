@@ -22,3 +22,14 @@ If you don't know what the your-resources-folder folder is, go to krita -> Setti
 - Select a Rotation option. Same as rotating your image to the left or right. 
 - If you select "Export Selected Layers" it will only export the selected layers, otherwise it exports the visible layers. Note: It doesn't support selecting a group, you must select the actual paint or vector layers you want. 
 - Choose an output file and you're done.
+
+## Regions
+
+You can now save custom regions based of a selection.
+
+- Select something
+- Open the plugin
+- Click "Grab Selection". This will update the x, y, width and height of the plugin. 
+- Click "Save Region". 
+- Name your region and confirm.
+- Now you can select saved regions and reselect them using the "Select Region" button. 
