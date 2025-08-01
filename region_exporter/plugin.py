@@ -115,10 +115,15 @@ class ExportRectangleDialog(QDialog):
         file_layout.addWidget(btnBrowse)
         layout.addLayout(file_layout)
 
-        # --- Export button ---
+        # --- Export & Open buttons ---
+        action_layout = QHBoxLayout()
         btnExport = QPushButton("Export")
         btnExport.clicked.connect(self.export)
-        layout.addWidget(btnExport)
+        btnOpen  = QPushButton("Open in New Document")
+        btnOpen.clicked.connect(self.openInNewDocument)
+        action_layout.addWidget(btnExport)
+        action_layout.addWidget(btnOpen)
+        layout.addLayout(action_layout)
 
         self.setLayout(layout)
 
@@ -184,30 +189,22 @@ class ExportRectangleDialog(QDialog):
         self.newHeightEdit.setText(str(h))
 
     def selectRegion(self):
-        """
-        If a saved region is selected, use it; otherwise use the
-        X/Y/Width/Height fields to create the selection.
-        """
         idx = self.regionCombo.currentIndex()
         if idx > 0:
             r = self.regions[idx - 1]
             x, y, w, h = r["x"], r["y"], r["width"], r["height"]
         else:
             try:
-                x = int(self.xEdit.text())
-                y = int(self.yEdit.text())
-                w = int(self.widthEdit.text())
-                h = int(self.heightEdit.text())
+                x = int(self.xEdit.text()); y = int(self.yEdit.text())
+                w = int(self.widthEdit.text()); h = int(self.heightEdit.text())
             except ValueError:
                 QMessageBox.warning(self, "Invalid", "Enter valid integers for X, Y, Width, Height.")
                 return
-
         app = Krita.instance()
         doc = app.activeDocument()
         if not doc:
             QMessageBox.warning(self, "No Document", "No active document found.")
             return
-
         sel = Selection()
         sel.select(x, y, w, h, 255)
         doc.setSelection(sel)
@@ -262,8 +259,6 @@ class ExportRectangleDialog(QDialog):
         ):
             fld.setText("0")
 
-    # ---- Helpers & Export Logic ----
-
     def browseFile(self):
         d = self.settings.value("lastOutputDir", "")
         fn, _ = QFileDialog.getSaveFileName(
@@ -273,48 +268,83 @@ class ExportRectangleDialog(QDialog):
         if fn:
             self.outputPathEdit.setText(fn)
 
-    def get_all_nodes(self, doc):
-        nodes = []
-        def traverse(n):
-            nodes.append(n)
-            for c in n.childNodes():
-                traverse(c)
-        for top in doc.topLevelNodes():
-            traverse(top)
-        return nodes
-
     def export(self):
+        cropped = self._generateCropped()
+        if cropped is None:
+            return
+        out = self.outputPathEdit.text().strip()
+        if not out or os.path.isdir(out):
+            QMessageBox.warning(self, "Error", "Select a valid output file.")
+            return
+        if cropped.save(out):
+            self._persistSettings()
+            QMessageBox.information(self, "Success", "Export successful!")
+            self.accept()
+        else:
+            QMessageBox.warning(self, "Error", "Failed to save the cropped image.")
+
+    def openInNewDocument(self):
+        """
+        Opens the cropped image in a brand-new Krita document.
+        """
+        cropped = self._generateCropped()
+        if cropped is None:
+            return
+
+        app = Krita.instance()
+        orig = app.activeDocument()
+        # create a new doc with same color model/depth/profile/resolution :contentReference[oaicite:2]{index=2}
+        new_name = f"{orig.name()} – Cropped"
+        new_doc = app.createDocument(
+            cropped.width(), 
+            cropped.height(),
+            new_name,
+            orig.colorModel(), 
+            orig.colorDepth(),
+            orig.colorProfile(), 
+            orig.resolution()
+        )
+        # convert to raw RGBA8888 bytes
+        ptr = cropped.bits()
+        ptr.setsize(cropped.byteCount())
+        raw = ptr.asstring()
+        ba = QByteArray(raw)
+        new_node = new_doc.createNode("Layer 1", "paintLayer")
+        # paste into new document :contentReference[oaicite:3]{index=3}
+        new_node.setPixelData(ba, 0, 0, cropped.width(), cropped.height())
+        new_doc.refreshProjection()
+        new_doc.rootNode().addChildNode(new_node, None)
+        # show it
+        app.activeWindow().addView(new_doc)
+        self._persistSettings()
+        self.accept()
+
+    def _generateCropped(self):
         try:
             x  = int(self.xEdit.text());    y  = int(self.yEdit.text())
             w  = int(self.widthEdit.text()); h  = int(self.heightEdit.text())
             nw = int(self.newWidthEdit.text()); nh = int(self.newHeightEdit.text())
         except ValueError:
             QMessageBox.warning(self, "Error", "Enter valid integers for all size fields.")
-            return
-        out = self.outputPathEdit.text().strip()
-        if not out or os.path.isdir(out):
-            QMessageBox.warning(self, "Error", "Select a valid output file.")
-            return
+            return None
 
         app = Krita.instance()
         doc = app.activeDocument()
         view = app.activeWindow().activeView()
         if not doc:
             QMessageBox.warning(self, "Error", "No active document found.")
-            return
+            return None
 
-        layers_exported = 0
         if self.exportSelectedCheckbox.isChecked():
             sel_nodes = view.selectedNodes()
             if not sel_nodes:
                 QMessageBox.warning(self, "Error", "No layers selected.")
-                return
+                return None
             all_nodes = self.get_all_nodes(doc)
             old_vis = {n.uniqueId().toString(): n.visible() for n in all_nodes}
             for n in all_nodes: n.setVisible(False)
             for n in sel_nodes:
                 set_node_and_parents_visible(n, True)
-                layers_exported += 1
             doc.refreshProjection()
             cropped = doc.projection(x, y, w, h)
             for n in all_nodes:
@@ -332,26 +362,31 @@ class ExportRectangleDialog(QDialog):
         elif rot == "Rotate Counterclockwise":
             cropped = cropped.transformed(QTransform().rotate(-90), Qt.SmoothTransformation)
 
-        if cropped.save(out):
-            self.settings.setValue(
-                "exportSelected",
-                "true" if self.exportSelectedCheckbox.isChecked() else "false"
-            )
-            for key, ed in (
-                ("x", self.xEdit), ("y", self.yEdit),
-                ("width", self.widthEdit), ("height", self.heightEdit),
-                ("newWidth", self.newWidthEdit), ("newHeight", self.newHeightEdit)
-            ):
-                self.settings.setValue(key, ed.text())
-            self.settings.setValue("rotation", rot)
-            self.settings.setValue("lastOutputDir", os.path.dirname(out))
-            QMessageBox.information(
-                self, "Success",
-                f"Export successful!{f' Layers exported: {layers_exported}' if layers_exported else ''}"
-            )
-            self.accept()
-        else:
-            QMessageBox.warning(self, "Error", "Failed to save the cropped image.")
+        return cropped
+
+    def _persistSettings(self):
+        self.settings.setValue(
+            "exportSelected",
+            "true" if self.exportSelectedCheckbox.isChecked() else "false"
+        )
+        for key, ed in (
+            ("x", self.xEdit), ("y", self.yEdit),
+            ("width", self.widthEdit), ("height", self.heightEdit),
+            ("newWidth", self.newWidthEdit), ("newHeight", self.newHeightEdit)
+        ):
+            self.settings.setValue(key, ed.text())
+        self.settings.setValue("rotation", self.rotationCombo.currentText())
+        self.settings.setValue("lastOutputDir", os.path.dirname(self.outputPathEdit.text()))
+
+    def get_all_nodes(self, doc):
+        nodes = []
+        def traverse(n):
+            nodes.append(n)
+            for c in n.childNodes():
+                traverse(c)
+        for top in doc.topLevelNodes():
+            traverse(top)
+        return nodes
 
 class ExportRectangleExtension(Extension):
     def __init__(self, parent):
