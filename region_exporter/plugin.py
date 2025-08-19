@@ -1,19 +1,26 @@
 import os
 import json
-from krita import Extension, Krita, Selection
+from krita import Extension, Krita, Selection, GroupLayer, Node
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QMessageBox, QComboBox,
-    QCheckBox, QInputDialog
+    QCheckBox, QInputDialog, 
 )
-from PyQt5.QtCore import QSettings, Qt, QByteArray
-from PyQt5.QtGui import QTransform
+from PyQt5.QtCore import QSettings, Qt, QByteArray, qDebug
+from PyQt5.QtGui import QTransform, QImage
 
-def set_node_and_parents_visible(node, visible):
+def set_node_and_parents_visible(node : Node, visible):
     current = node
     while current is not None:
         current.setVisible(visible)
         current = current.parentNode()
+
+def reset_children_visible(node : Node, old_vis : dict):
+    for child in node.childNodes():
+        if isinstance(child, Node):
+            is_visible = old_vis.get(child.uniqueId().toString())
+            child.setVisible(is_visible)
+            reset_children_visible(child, old_vis)
 
 class ExportRectangleDialog(QDialog):
     def __init__(self, parent=None):
@@ -121,8 +128,11 @@ class ExportRectangleDialog(QDialog):
         btnExport.clicked.connect(self.export)
         btnOpen  = QPushButton("Open in New Document")
         btnOpen.clicked.connect(self.openInNewDocument)
+        btnGroups  = QPushButton("Export Groups to New Document")
+        btnGroups.clicked.connect(self.exportGroups)
         action_layout.addWidget(btnExport)
         action_layout.addWidget(btnOpen)
+        action_layout.addWidget(btnGroups)
         layout.addLayout(action_layout)
 
         self.setLayout(layout)
@@ -283,6 +293,41 @@ class ExportRectangleDialog(QDialog):
         else:
             QMessageBox.warning(self, "Error", "Failed to save the cropped image.")
 
+    def exportGroups(self):
+        images = self._generateCroppedGroups()
+        if len(images) < 1:
+            return
+        app = Krita.instance()
+        orig = app.activeDocument()
+        new_name = f"{orig.name()} – Cropped Groups"
+        frame_w = images[0].width()
+        
+        new_doc = app.createDocument(
+            frame_w * len(images), 
+            images[0].height(),
+            new_name,
+            orig.colorModel(), 
+            orig.colorDepth(),
+            orig.colorProfile(), 
+            orig.resolution()
+        )
+        cropped : QImage
+        for i, cropped in enumerate(images):
+            ptr = cropped.bits()
+            ptr.setsize(cropped.byteCount())
+            raw = ptr.asstring()
+            ba = QByteArray(raw)
+            x_offset = i * frame_w
+            new_node = new_doc.createNode(f"Frame {i}", "paintLayer")
+            # paste into new document :contentReference[oaicite:3]{index=3}
+            new_node.setPixelData(ba, x_offset, 0, cropped.width(), cropped.height())
+            new_doc.rootNode().addChildNode(new_node, None)
+            # show it
+        new_doc.refreshProjection()
+        app.activeWindow().addView(new_doc)
+        self._persistSettings()
+        self.accept()
+    
     def openInNewDocument(self):
         """
         Opens the cropped image in a brand-new Krita document.
@@ -363,6 +408,53 @@ class ExportRectangleDialog(QDialog):
             cropped = cropped.transformed(QTransform().rotate(-90), Qt.SmoothTransformation)
 
         return cropped
+    
+    def _generateCroppedGroups(self) -> list[QImage]:
+        try:
+            x  = int(self.xEdit.text());    y  = int(self.yEdit.text())
+            w  = int(self.widthEdit.text()); h  = int(self.heightEdit.text())
+            nw = int(self.newWidthEdit.text()); nh = int(self.newHeightEdit.text())
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Enter valid integers for all size fields.")
+            return None
+
+        app = Krita.instance()
+        doc = app.activeDocument()
+        view = app.activeWindow().activeView()
+        if not doc:
+            QMessageBox.warning(self, "Error", "No active document found.")
+            return None
+
+        sel_nodes = view.selectedNodes()
+        if not sel_nodes:
+            QMessageBox.warning(self, "Error", "No layers selected.")
+            return None
+        all_nodes = self.get_all_nodes(doc)
+        old_vis = {n.uniqueId().toString(): n.visible() for n in all_nodes}
+
+        images : list[QImage] = []
+        for n in sel_nodes:
+            if isinstance(n, GroupLayer):
+                for n2 in all_nodes: n2.setVisible(False) #hide everything
+                set_node_and_parents_visible(n, True) #show the node and its parents
+                reset_children_visible(n, old_vis) # reset children visibility
+                doc.refreshProjection() # refresh canvas
+                cropped = doc.projection(x, y, w, h) # get the cropped data
+
+                if (nw, nh) != (w, h):
+                    cropped = cropped.scaled(nw, nh, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+
+                rot = self.rotationCombo.currentText()
+                if rot == "Rotate Clockwise":
+                    cropped = cropped.transformed(QTransform().rotate(90), Qt.SmoothTransformation)
+                elif rot == "Rotate Counterclockwise":
+                    cropped = cropped.transformed(QTransform().rotate(-90), Qt.SmoothTransformation)
+                images.append(cropped)
+        # reset all back to normal
+        for n in all_nodes:
+            n.setVisible(old_vis[n.uniqueId().toString()])
+        doc.refreshProjection()
+        return images
 
     def _persistSettings(self):
         self.settings.setValue(

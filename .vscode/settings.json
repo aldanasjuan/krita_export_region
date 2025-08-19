@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "c:\\Users\\aldan\\.vscode\\extensions\\mcunderground.kritaexec-1.0.3\\krita-lang"
+    ]
+}
